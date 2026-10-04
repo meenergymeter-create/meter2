@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Energy Meter Dashboard</title>
+    <script src="https://unpkg.com/chart.js@3.9.1/dist/chart.min.js"></script>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #f4f5f4;
+            --panel: #ffffff;
+            --border: #dde2e0;
+            --border-strong: #c3cbc8;
+            --text: #13231f;
+            --text-muted: #5c6b67;
+            --text-faint: #8b9793;
+            --accent: #015b53;
+            --accent-soft: #e7efee;
+            --warn: #9a5b12;
+            --warn-soft: #fbf1e3;
+            --critical: #a3271f;
+            --critical-soft: #faeae9;
+            --radius: 6px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg);
+            min-height: 100vh;
+            color: var(--text);
+        }
+
+        .mono {
+            font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+            font-variant-numeric: tabular-nums;
+        }
+
+        nav {
+            position: sticky;
+            top: 0;
+            width: 100%;
+            background: var(--panel);
+            border-bottom: 1px solid var(--border);
+            padding: 14px 32px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .logo {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 9px;
+        }
+
+        .logo-mark { width: 8px; height: 8px; background: var(--accent); border-radius: 1px; }
+
+        main {
+            padding: 32px 24px 60px;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+        }
+
+        .dashboard-container {
+            width: 100%;
+            max-width: 880px;
+            background: var(--panel);
+            border-radius: 10px;
+            border: 1px solid var(--border);
+        }
+
+        .header {
+            padding: 22px 28px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .header-title h1 { font-size: 17px; font-weight: 700; letter-spacing: -0.1px; }
+        .header-title p { font-size: 12.5px; color: var(--text-faint); margin-top: 3px; }
+
+        .status-badge {
+            display: flex; align-items: center; gap: 7px;
+            padding: 6px 12px; background: var(--bg); border: 1px solid var(--border);
+            border-radius: 20px; font-size: 11.5px; font-weight: 600; color: var(--text-muted);
+        }
+
+        .status-badge.connected { color: var(--accent); border-color: #bcd6d2; }
+        .status-badge.connecting { color: var(--warn); border-color: #e6d3ae; }
+        .status-badge.error { color: var(--critical); border-color: #eabab7; }
+        .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+        .status-badge.connected .status-dot { animation: blink 2.2s ease-in-out infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+        .main-content { padding: 28px; display: grid; gap: 20px; }
+
+        .power-display {
+            background: var(--bg);
+            border-radius: var(--radius);
+            padding: 32px;
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--accent);
+        }
+
+        .power-display.high { border-left-color: var(--warn); }
+        .power-display.critical { border-left-color: var(--critical); }
+
+        .power-label {
+            font-size: 11.5px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.9px; color: var(--text-faint); margin-bottom: 14px;
+        }
+
+        .power-value { font-size: 56px; font-weight: 700; letter-spacing: -1px; line-height: 1; }
+        .power-unit { font-size: 17px; font-weight: 600; color: var(--text-muted); margin-left: 8px; }
+        .power-status { font-size: 12.5px; color: var(--text-muted); margin-top: 14px; font-weight: 500; }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+        }
+
+        .metric-card {
+            background: var(--panel); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 18px 20px;
+        }
+
+        .metric-label {
+            font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.7px; color: var(--text-faint); margin-bottom: 10px;
+        }
+
+        .metric-value { font-size: 26px; font-weight: 700; letter-spacing: -0.3px; }
+        .metric-unit { font-size: 12px; color: var(--text-muted); margin-left: 5px; font-weight: 500; }
+
+        .chart-container {
+            background: var(--panel); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 22px; height: 300px; position: relative;
+        }
+
+        .chart-title {
+            font-size: 11.5px; font-weight: 700; color: var(--text-faint);
+            margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.7px;
+        }
+
+        .stats-row {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 12px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border);
+        }
+
+        .stat-label {
+            font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.7px; color: var(--text-faint); margin-bottom: 5px;
+        }
+
+        .stat-value { font-size: 15px; font-weight: 700; }
+
+        footer { padding: 28px; text-align: center; }
+        footer p { font-size: 12px; color: var(--text-faint); margin-bottom: 4px; }
+
+        @media (max-width: 768px) {
+            main { padding: 20px 12px 40px; }
+            .main-content { padding: 20px; gap: 16px; }
+            .power-display { padding: 24px 22px; }
+            .power-value { font-size: 42px; }
+            .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+            .chart-container { height: 240px; }
+            .header { padding: 18px 20px; }
+            nav { padding: 12px 18px; }
+        }
+
+        @media (max-width: 480px) {
+            .power-value { font-size: 34px; }
+            .metric-value { font-size: 21px; }
+            .metrics-grid { grid-template-columns: 1fr; }
+            .main-content { padding: 14px; gap: 12px; }
+            .header { padding: 14px; }
+            .power-display { padding: 20px 16px; }
+            .chart-container { height: 200px; padding: 16px; }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <div class="logo">
+            <span class="logo-mark"></span>
+            Energy Meter
+        </div>
+    </nav>
+
+    <main>
+        <div class="dashboard-container">
+            <div class="header">
+                <div class="header-title">
+                    <h1>Energy Dashboard</h1>
+                    <p>Live readings from esp32/energy</p>
+                </div>
+                <div id="status-badge" class="status-badge connecting">
+                    <span class="status-dot"></span>
+                    <span>Connecting...</span>
+                </div>
+            </div>
+
+            <div class="main-content">
+                <div class="power-display" id="power-display">
+                    <div class="power-label">Current Power Draw</div>
+                    <div style="display: flex; align-items: baseline;">
+                        <span class="power-value mono" id="current-power">--</span>
+                        <span class="power-unit">W</span>
+                    </div>
+                    <div class="power-status" id="power-status">Loading data...</div>
+                </div>
+
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-label">Voltage</div>
+                        <div><span class="metric-value mono" id="voltage">--</span><span class="metric-unit">V</span></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Current</div>
+                        <div><span class="metric-value mono" id="current">--</span><span class="metric-unit">A</span></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Power Factor</div>
+                        <div><span class="metric-value mono" id="power-factor">--</span><span class="metric-unit"></span></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Total Energy</div>
+                        <div><span class="metric-value mono" id="energy">--</span><span class="metric-unit">kWh</span></div>
+                    </div>
+                </div>
+
+                <div class="chart-container">
+                    <div class="chart-title">Power Consumption Trend — 60 Min</div>
+                    <canvas id="powerChart"></canvas>
+                    <div class="stats-row">
+                        <div class="stat">
+                            <div class="stat-label">Peak</div>
+                            <div class="stat-value mono" id="peak-power">-- W</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">Average</div>
+                            <div class="stat-value mono" id="avg-power">-- W</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">Minimum</div>
+                            <div class="stat-value mono" id="min-power">-- W</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <p>Monitoring your power, optimizing your energy</p>
+    </footer>
+
+    <script>
+        const HIVEMQ_HOST = "aa9b9453b3db4ae19e6dc1e13de35821.s1.eu.hivemq.cloud";
+        const HIVEMQ_PORT = 8884;
+        const MQTT_USERNAME = "Pitest";
+        const MQTT_PASSWORD = "Pisith009";
+        const TOPIC_PREFIX = "esp32/energy";
+
+        const powerHistory = [];
+        const maxHistoryLength = 60;
+        let chart = null;
+
+        function initChart() {
+            const ctx = document.getElementById('powerChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: { labels: [], datasets: [{
+                    label: 'Power (W)', data: [],
+                    borderColor: '#015b53', backgroundColor: 'rgba(1, 91, 83, 0.06)',
+                    borderWidth: 2, fill: true, tension: 0.3, pointRadius: 0,
+                    pointHoverRadius: 4, pointBackgroundColor: '#015b53',
+                    pointBorderColor: '#ffffff', pointBorderWidth: 2
+                }]},
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#13231f', titleColor: '#ffffff', bodyColor: '#ffffff',
+                            padding: 10, displayColors: false,
+                            callbacks: { label: c => c.parsed.y.toFixed(0) + ' W' }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: '#e8ebe9', drawBorder: false },
+                            ticks: { color: '#8b9793', font: { size: 10.5, weight: '500' } }
+                        },
+                        x: {
+                            grid: { display: false, drawBorder: false },
+                            ticks: { color: '#8b9793', font: { size: 10.5, weight: '500' } }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateChart() {
+            if (!chart) return;
+            const now = new Date();
+            const labels = powerHistory.map((_, i) => {
+                const d = new Date(now.getTime() - (powerHistory.length - i - 1) * 60000);
+                return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+            });
+            chart.data.labels = labels;
+            chart.data.datasets[0].data = powerHistory;
+            chart.update('none');
+
+            if (powerHistory.length > 0) {
+                const peak = Math.max(...powerHistory);
+                const min = Math.min(...powerHistory);
+                const avg = Math.round(powerHistory.reduce((a, b) => a + b, 0) / powerHistory.length);
+                document.getElementById('peak-power').textContent = peak.toFixed(0) + ' W';
+                document.getElementById('avg-power').textContent = avg + ' W';
+                document.getElementById('min-power').textContent = min.toFixed(0) + ' W';
+            }
+        }
+
+        function updatePowerDisplay(power) {
+            const numPower = parseFloat(power);
+            const powerEl = document.getElementById('current-power');
+            const displayEl = document.getElementById('power-display');
+            const statusEl = document.getElementById('power-status');
+
+            powerEl.textContent = isNaN(numPower) ? '--' : numPower.toFixed(0);
+            displayEl.classList.remove('high', 'critical');
+            if (numPower > 3000) {
+                displayEl.classList.add('critical');
+                statusEl.textContent = 'CRITICAL — power exceeds 3000 W';
+            } else if (numPower > 2000) {
+                displayEl.classList.add('high');
+                statusEl.textContent = 'HIGH — power exceeds 2000 W';
+            } else {
+                statusEl.textContent = 'Normal operation';
+            }
+        }
+
+        const client = mqtt.connect("wss://" + HIVEMQ_HOST + ":" + HIVEMQ_PORT + "/mqtt", {
+            username: MQTT_USERNAME,
+            password: MQTT_PASSWORD,
+            clientId: "public-widget-" + Math.random().toString(16).slice(2),
+            clean: true,
+            reconnectPeriod: 3000,
+        });
+
+        client.on("connect", function () {
+            updateStatus("Connected", "");
+            client.subscribe(TOPIC_PREFIX + "/#", function (err) {
+                if (err) updateStatus("Subscribe error", err.message);
+            });
+        });
+
+        client.on("message", function (topic, message) {
+            const lastSegment = topic.substring(topic.lastIndexOf("/") + 1);
+            const value = message.toString();
+
+            switch (lastSegment) {
+                case 'voltage':
+                    document.getElementById('voltage').textContent = parseFloat(value).toFixed(1);
+                    break;
+                case 'current':
+                    document.getElementById('current').textContent = parseFloat(value).toFixed(2);
+                    break;
+                case 'power':
+                    updatePowerDisplay(value);
+                    powerHistory.push(parseFloat(value));
+                    if (powerHistory.length > maxHistoryLength) powerHistory.shift();
+                    updateChart();
+                    break;
+                case 'kwh':
+                    document.getElementById('energy').textContent = parseFloat(value).toFixed(2);
+                    break;
+                case 'pf':
+                case 'power_factor':
+                    document.getElementById('power-factor').textContent = parseFloat(value).toFixed(2);
+                    break;
+            }
+            updateStatus("Connected", "");
+        });
+
+        client.on("error", function (err) { updateStatus("Error", err.message); });
+        client.on("reconnect", function () { updateStatus("Reconnecting", "..."); });
+        client.on("close", function () { updateStatus("Disconnected", ""); });
+
+        function updateStatus(status, message) {
+            const badge = document.getElementById('status-badge');
+            const text = message ? `${status}: ${message}` : status;
+            badge.innerHTML = `<span class="status-dot"></span><span>${text}</span>`;
+            badge.classList.remove('connecting', 'error', 'connected');
+            if (status === "Connected") badge.classList.add('connected');
+            else if (status === "Reconnecting" || status === "Connecting...") badge.classList.add('connecting');
+            else badge.classList.add('error');
+        }
+
+        window.addEventListener('load', function () { initChart(); });
+    </script>
+</body>
+</html>
